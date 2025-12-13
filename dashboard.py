@@ -1,0 +1,442 @@
+"""
+Streamlit dashboard for network traffic classification.
+Provides an interactive web interface for model predictions.
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import pickle
+import plotly.express as px
+import plotly.graph_objects as go
+from pathlib import Path
+import sys
+
+# Add current directory to path
+sys.path.append(str(Path(__file__).parent))
+
+from preprocessing import NetworkTrafficPreprocessor
+
+# Page configuration
+st.set_page_config(
+    page_title="Network Traffic Classifier",
+    page_icon="🔒",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Class labels
+CLASS_LABELS = {
+    0: "Normal SSH Traffic",
+    1: "FTP Traffic",
+    2: "Malicious/Attack Traffic"
+}
+
+CLASS_COLORS = {
+    0: "#2ecc71",  # Green
+    1: "#3498db",  # Blue
+    2: "#e74c3c"   # Red
+}
+
+CLASS_DESCRIPTIONS = {
+    0: "Regular SSH (Secure Shell) traffic - typically secure remote access",
+    1: "File Transfer Protocol traffic - used for file transfers",
+    2: "Potentially malicious or attack traffic - requires investigation"
+}
+
+
+@st.cache_resource
+def load_models():
+    """Load trained models and preprocessor."""
+    models_dir = Path("models")
+
+    try:
+        # Load preprocessor
+        with open(models_dir / "preprocessor.pkl", "rb") as f:
+            preprocessor = pickle.load(f)
+
+        # Load Random Forest model
+        with open(models_dir / "rf_model.pkl", "rb") as f:
+            rf_model = pickle.load(f)
+
+        # Load metadata
+        with open(models_dir / "model_metadata.pkl", "rb") as f:
+            metadata = pickle.load(f)
+
+        return preprocessor, rf_model, metadata
+
+    except FileNotFoundError:
+        st.error("Model files not found! Please run train.py first.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        st.stop()
+
+
+def create_feature_input_form():
+    """Create form for manual feature input."""
+    st.subheader("Enter Network Traffic Features")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**Connection Information**")
+        src_ip = st.text_input("Source IP", value="192.168.113.129")
+        dst_ip = st.text_input("Destination IP", value="192.168.113.130")
+        src_port = st.number_input("Source Port", min_value=0, max_value=65535, value=44017)
+        dst_port = st.number_input("Destination Port", min_value=0, max_value=65535, value=22)
+        protocol = st.selectbox("Protocol", ["TCP", "UDP", "ICMP"], index=0)
+        duration = st.number_input("Duration (seconds)", min_value=0.0, value=2.103768, format="%.6f")
+
+    with col2:
+        st.markdown("**Packet Statistics**")
+        total_packets = st.number_input("Total Packets", min_value=0, value=26)
+        total_bytes = st.number_input("Total Bytes", min_value=0, value=5451)
+        min_packet_size = st.number_input("Min Packet Size", min_value=0, value=66)
+        max_packet_size = st.number_input("Max Packet Size", min_value=0, value=1602)
+        avg_packet_size = st.number_input("Avg Packet Size", min_value=0.0, value=209.65)
+        std_packet_size = st.number_input("Std Packet Size", min_value=0.0, value=340.88)
+
+    with col3:
+        st.markdown("**TCP Flags**")
+        syn_count = st.number_input("SYN Count", min_value=0, value=2)
+        ack_count = st.number_input("ACK Count", min_value=0, value=25)
+        fin_count = st.number_input("FIN Count", min_value=0, value=2)
+        rst_count = st.number_input("RST Count", min_value=0, value=0)
+        psh_count = st.number_input("PSH Count", min_value=0, value=8)
+        urg_count = st.number_input("URG Count", min_value=0, value=0)
+
+    col4, col5 = st.columns(2)
+
+    with col4:
+        st.markdown("**Flow Metrics**")
+        packets_per_second = st.number_input("Packets/Second", min_value=0.0, value=12.35)
+        bytes_per_second = st.number_input("Bytes/Second", min_value=0.0, value=2591.23)
+        bytes_per_packet = st.number_input("Bytes/Packet", min_value=0.0, value=209.65)
+        forward_packets = st.number_input("Forward Packets", min_value=0, value=13)
+        backward_packets = st.number_input("Backward Packets", min_value=0, value=13)
+        forward_bytes = st.number_input("Forward Bytes", min_value=0, value=2907)
+        backward_bytes = st.number_input("Backward Bytes", min_value=0, value=2544)
+        forward_backward_ratio = st.number_input("Forward/Backward Ratio", min_value=0.0, value=1.14)
+
+    with col5:
+        st.markdown("**Inter-Arrival Time (IAT)**")
+        avg_iat = st.number_input("Average IAT", min_value=0.0, value=0.084151, format="%.6f")
+        std_iat = st.number_input("Std IAT", min_value=0.0, value=0.385122, format="%.6f")
+        min_iat = st.number_input("Min IAT", min_value=0.0, value=0.00000095, format="%.8f")
+        max_iat = st.number_input("Max IAT", min_value=0.0, value=1.970212, format="%.6f")
+
+        st.markdown("**Port Indicators**")
+        syn_ack_ratio = st.number_input("SYN/ACK Ratio", min_value=0.0, value=0.08)
+        is_port_22 = st.selectbox("Is Port 22 (SSH)?", [0, 1], index=1)
+        is_port_6200 = st.selectbox("Is Port 6200?", [0, 1], index=0)
+        is_ftp_port = st.selectbox("Is FTP Port?", [0, 1], index=0)
+        is_ftp_data_port = st.selectbox("Is FTP Data Port?", [0, 1], index=0)
+
+    # Compile features into dictionary
+    features = {
+        'src_ip': src_ip,
+        'dst_ip': dst_ip,
+        'src_port': src_port,
+        'dst_port': dst_port,
+        'protocol': protocol,
+        'duration': duration,
+        'total_packets': total_packets,
+        'total_bytes': total_bytes,
+        'min_packet_size': min_packet_size,
+        'max_packet_size': max_packet_size,
+        'avg_packet_size': avg_packet_size,
+        'std_packet_size': std_packet_size,
+        'syn_count': syn_count,
+        'ack_count': ack_count,
+        'fin_count': fin_count,
+        'rst_count': rst_count,
+        'psh_count': psh_count,
+        'urg_count': urg_count,
+        'packets_per_second': packets_per_second,
+        'bytes_per_second': bytes_per_second,
+        'bytes_per_packet': bytes_per_packet,
+        'forward_packets': forward_packets,
+        'backward_packets': backward_packets,
+        'forward_bytes': forward_bytes,
+        'backward_bytes': backward_bytes,
+        'forward_backward_ratio': forward_backward_ratio,
+        'avg_iat': avg_iat,
+        'std_iat': std_iat,
+        'min_iat': min_iat,
+        'max_iat': max_iat,
+        'syn_ack_ratio': syn_ack_ratio,
+        'is_port_22': is_port_22,
+        'is_port_6200': is_port_6200,
+        'is_ftp_port': is_ftp_port,
+        'is_ftp_data_port': is_ftp_data_port
+    }
+
+    return features
+
+
+def display_prediction_result(prediction, probabilities):
+    """Display prediction results with visualization."""
+    st.markdown("---")
+    st.subheader("Prediction Result")
+
+    # Main prediction display
+    col1, col2, col3 = st.columns([2, 2, 3])
+
+    with col1:
+        st.metric(
+            label="Predicted Class",
+            value=f"Class {prediction}",
+            delta=CLASS_LABELS[prediction]
+        )
+
+    with col2:
+        confidence = probabilities[prediction] * 100
+        st.metric(
+            label="Confidence",
+            value=f"{confidence:.2f}%"
+        )
+
+    with col3:
+        st.info(CLASS_DESCRIPTIONS[prediction])
+
+    # Probability visualization
+    st.markdown("### Class Probabilities")
+
+    # Create probability bar chart
+    prob_df = pd.DataFrame({
+        'Class': [f"Class {i}: {CLASS_LABELS[i]}" for i in range(3)],
+        'Probability': [probabilities[i] * 100 for i in range(3)],
+        'Color': [CLASS_COLORS[i] for i in range(3)]
+    })
+
+    fig = px.bar(
+        prob_df,
+        x='Probability',
+        y='Class',
+        orientation='h',
+        color='Color',
+        color_discrete_map="identity",
+        text='Probability'
+    )
+
+    fig.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+    fig.update_layout(
+        xaxis_title="Probability (%)",
+        yaxis_title="",
+        showlegend=False,
+        height=250
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def display_batch_results(predictions, probabilities, original_df=None):
+    """Display batch prediction results."""
+    st.markdown("---")
+    st.subheader("Batch Prediction Results")
+
+    # Summary statistics
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("Total Samples", len(predictions))
+
+    with col2:
+        class_0_count = sum(predictions == 0)
+        st.metric(CLASS_LABELS[0], class_0_count)
+
+    with col3:
+        class_1_count = sum(predictions == 1)
+        st.metric(CLASS_LABELS[1], class_1_count)
+
+    with col4:
+        class_2_count = sum(predictions == 2)
+        st.metric(CLASS_LABELS[2], class_2_count)
+
+    # Class distribution pie chart
+    st.markdown("### Class Distribution")
+
+    class_counts = pd.DataFrame({
+        'Class': [CLASS_LABELS[i] for i in range(3)],
+        'Count': [sum(predictions == i) for i in range(3)]
+    })
+
+    fig = px.pie(
+        class_counts,
+        values='Count',
+        names='Class',
+        color='Class',
+        color_discrete_map={
+            CLASS_LABELS[0]: CLASS_COLORS[0],
+            CLASS_LABELS[1]: CLASS_COLORS[1],
+            CLASS_LABELS[2]: CLASS_COLORS[2]
+        }
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Detailed results table
+    st.markdown("### Detailed Results")
+
+    results_df = pd.DataFrame({
+        'Index': range(len(predictions)),
+        'Predicted Class': predictions,
+        'Prediction Label': [CLASS_LABELS[p] for p in predictions],
+        'Confidence (%)': [probabilities[i][predictions[i]] * 100 for i in range(len(predictions))],
+        'Class 0 Prob (%)': [probabilities[i][0] * 100 for i in range(len(predictions))],
+        'Class 1 Prob (%)': [probabilities[i][1] * 100 for i in range(len(predictions))],
+        'Class 2 Prob (%)': [probabilities[i][2] * 100 for i in range(len(predictions))]
+    })
+
+    # Add color coding
+    def color_prediction(row):
+        color = CLASS_COLORS[row['Predicted Class']]
+        return [f'background-color: {color}; color: white' if col == 'Prediction Label' else '' for col in row.index]
+
+    st.dataframe(
+        results_df.style.apply(color_prediction, axis=1).format({
+            'Confidence (%)': '{:.2f}',
+            'Class 0 Prob (%)': '{:.2f}',
+            'Class 1 Prob (%)': '{:.2f}',
+            'Class 2 Prob (%)': '{:.2f}'
+        }),
+        use_container_width=True,
+        height=400
+    )
+
+    # Download results
+    csv = results_df.to_csv(index=False)
+    st.download_button(
+        label="Download Results as CSV",
+        data=csv,
+        file_name="prediction_results.csv",
+        mime="text/csv"
+    )
+
+
+def main():
+    """Main dashboard application."""
+
+    # Header
+    st.title("🔒 Network Traffic Classification Dashboard")
+    st.markdown("Classify network traffic patterns using machine learning")
+
+    # Load models
+    with st.spinner("Loading models..."):
+        preprocessor, rf_model, metadata = load_models()
+
+    # Sidebar
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio(
+        "Select Mode",
+        ["Single Prediction", "Batch Prediction", "Model Info"]
+    )
+
+    if page == "Single Prediction":
+        st.header("Single Prediction Mode")
+        st.markdown("Enter network traffic features manually for classification")
+
+        features = create_feature_input_form()
+
+        if st.button("Predict", type="primary"):
+            with st.spinner("Making prediction..."):
+                try:
+                    # Convert to DataFrame
+                    df = pd.DataFrame([features])
+
+                    # Preprocess
+                    X_processed = preprocessor.transform(df)
+
+                    # Predict
+                    prediction = rf_model.predict(X_processed)[0]
+                    probabilities = rf_model.predict_proba(X_processed)[0]
+
+                    # Display results
+                    display_prediction_result(prediction, probabilities)
+
+                except Exception as e:
+                    st.error(f"Prediction failed: {str(e)}")
+
+    elif page == "Batch Prediction":
+        st.header("Batch Prediction Mode")
+        st.markdown("Upload a CSV file with network traffic data for bulk classification")
+
+        uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
+
+        if uploaded_file is not None:
+            try:
+                # Read CSV
+                df = pd.read_csv(uploaded_file)
+
+                st.success(f"Loaded {len(df)} samples")
+                st.markdown("**Data Preview:**")
+                st.dataframe(df.head(), use_container_width=True)
+
+                if st.button("Predict All", type="primary"):
+                    with st.spinner("Processing batch predictions..."):
+                        # Preprocess
+                        X_processed = preprocessor.transform(df)
+
+                        # Predict
+                        predictions = rf_model.predict(X_processed)
+                        probabilities = rf_model.predict_proba(X_processed)
+
+                        # Display results
+                        display_batch_results(predictions, probabilities, df)
+
+            except Exception as e:
+                st.error(f"Error processing file: {str(e)}")
+
+    else:  # Model Info
+        st.header("Model Information")
+
+        rf_metrics = metadata['random_forest']
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### Model Performance")
+            st.metric("Test Accuracy", f"{rf_metrics['test_accuracy']:.4f}")
+            st.metric("Precision", f"{rf_metrics['precision']:.4f}")
+            st.metric("Recall", f"{rf_metrics['recall']:.4f}")
+            st.metric("F1 Score", f"{rf_metrics['f1_score']:.4f}")
+
+        with col2:
+            st.markdown("### Confusion Matrix")
+            cm = np.array(rf_metrics['confusion_matrix'])
+
+            fig = go.Figure(data=go.Heatmap(
+                z=cm,
+                x=[CLASS_LABELS[i] for i in range(3)],
+                y=[CLASS_LABELS[i] for i in range(3)],
+                text=cm,
+                texttemplate="%{text}",
+                textfont={"size": 16},
+                colorscale='Blues'
+            ))
+
+            fig.update_layout(
+                xaxis_title="Predicted",
+                yaxis_title="Actual",
+                height=400
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### Final Features Used")
+        st.info(f"The model uses {len(metadata['final_features'])} features after preprocessing")
+
+        features_df = pd.DataFrame({
+            'Feature': metadata['final_features']
+        })
+        st.dataframe(features_df, use_container_width=True)
+
+        st.markdown("### Removed Features")
+        st.write(f"**Zero Variance:** {', '.join(metadata['removed_features']['zero_variance']) if metadata['removed_features']['zero_variance'] else 'None'}")
+        st.write(f"**Weak Correlation:** {len(metadata['removed_features']['weak_correlation'])} features")
+        st.write(f"**High Correlation:** {len(metadata['removed_features']['high_correlation'])} features")
+
+
+if __name__ == "__main__":
+    main()
