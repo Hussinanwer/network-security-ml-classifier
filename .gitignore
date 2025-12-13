@@ -39,6 +39,9 @@ venv.bak/
 .pydevproject
 .settings/
 
+# Claude Code
+.claude/settings.local.json
+
 # Environment variables (keep .env.example)
 .env
 
