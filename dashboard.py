@@ -47,7 +47,7 @@ CLASS_DESCRIPTIONS = {
 
 @st.cache_resource
 def load_models():
-    """Load trained models and preprocessor."""
+    """Load trained models, preprocessor, and feature selector."""
     models_dir = Path("models")
 
     try:
@@ -55,7 +55,11 @@ def load_models():
         with open(models_dir / "preprocessor.pkl", "rb") as f:
             preprocessor = pickle.load(f)
 
-        # Load Random Forest model
+        # Load feature selector
+        with open(models_dir / "feature_selector.pkl", "rb") as f:
+            feature_selector = pickle.load(f)
+
+        # Load Random Forest model (primary model)
         with open(models_dir / "rf_model.pkl", "rb") as f:
             rf_model = pickle.load(f)
 
@@ -63,10 +67,10 @@ def load_models():
         with open(models_dir / "model_metadata.pkl", "rb") as f:
             metadata = pickle.load(f)
 
-        return preprocessor, rf_model, metadata
+        return preprocessor, feature_selector, rf_model, metadata
 
-    except FileNotFoundError:
-        st.error("Model files not found! Please run train.py first.")
+    except FileNotFoundError as e:
+        st.error(f"Model files not found! Please run train.py first. Missing: {e}")
         st.stop()
     except Exception as e:
         st.error(f"Error loading models: {e}")
@@ -324,7 +328,7 @@ def main():
 
     # Load models
     with st.spinner("Loading models..."):
-        preprocessor, rf_model, metadata = load_models()
+        preprocessor, feature_selector, rf_model, metadata = load_models()
 
     # Sidebar
     st.sidebar.title("Navigation")
@@ -348,9 +352,12 @@ def main():
                     # Preprocess
                     X_processed = preprocessor.transform(df)
 
+                    # Apply feature selection
+                    X_selected = feature_selector.transform(X_processed)
+
                     # Predict
-                    prediction = rf_model.predict(X_processed)[0]
-                    probabilities = rf_model.predict_proba(X_processed)[0]
+                    prediction = rf_model.predict(X_selected)[0]
+                    probabilities = rf_model.predict_proba(X_selected)[0]
 
                     # Display results
                     display_prediction_result(prediction, probabilities)
@@ -378,9 +385,12 @@ def main():
                         # Preprocess
                         X_processed = preprocessor.transform(df)
 
+                        # Apply feature selection
+                        X_selected = feature_selector.transform(X_processed)
+
                         # Predict
-                        predictions = rf_model.predict(X_processed)
-                        probabilities = rf_model.predict_proba(X_processed)
+                        predictions = rf_model.predict(X_selected)
+                        probabilities = rf_model.predict_proba(X_selected)
 
                         # Display results
                         display_batch_results(predictions, probabilities, df)
