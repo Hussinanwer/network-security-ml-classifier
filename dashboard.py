@@ -527,9 +527,12 @@ def main():
         st.dataframe(features_df, use_container_width=True)
 
         st.markdown("### Removed Features")
-        st.write(f"**Zero Variance:** {', '.join(metadata['removed_features']['zero_variance']) if metadata['removed_features']['zero_variance'] else 'None'}")
-        st.write(f"**Weak Correlation:** {len(metadata['removed_features']['weak_correlation'])} features")
-        st.write(f"**High Correlation:** {len(metadata['removed_features']['high_correlation'])} features")
+        leaky_features = metadata['removed_features'].get('leaky', [])
+        if leaky_features:
+            st.write(f"**Leaky Features (Perfect Indicators):** {', '.join(leaky_features)}")
+            st.info("These features were removed because they are too perfect indicators and would cause overfitting.")
+        else:
+            st.write("**Leaky Features:** None")
 
 
 if __name__ == "__main__":
