@@ -527,12 +527,17 @@ def main():
         st.dataframe(features_df, use_container_width=True)
 
         st.markdown("### Removed Features")
-        leaky_features = metadata['removed_features'].get('leaky', [])
-        if leaky_features:
-            st.write(f"**Leaky Features (Perfect Indicators):** {', '.join(leaky_features)}")
-            st.info("These features were removed because they are too perfect indicators and would cause overfitting.")
+        removed_features = metadata['removed_features'].get('removed', [])
+        if removed_features:
+            st.write(f"**Removed Features:** {', '.join(removed_features)}")
+            st.info("""
+            Features removed (matching notebook preprocessing):
+            - Zero variance: urg_count, is_ftp_data_port (only 1 unique value)
+            - Leaky indicator: is_port_6200 (perfect attack indicator)
+            - Encoded categoricals: src_ip, dst_ip (removed after encoding for generalization)
+            """)
         else:
-            st.write("**Leaky Features:** None")
+            st.write("**Removed Features:** None")
 
 
 if __name__ == "__main__":

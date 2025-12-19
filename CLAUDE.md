@@ -27,20 +27,25 @@ This is a Network Security machine learning project focused on multiclass classi
 The notebook follows this workflow:
 
 1. **Data Loading & Exploration**: Load CSV, check shape, info, missing values
-2. **Categorical Encoding**: Use LabelEncoder for src_ip, dst_ip, and protocol fields
+2. **Categorical Encoding** (Cell 4): Use LabelEncoder for src_ip, dst_ip, and protocol fields
    - src_ip: Encoded as 0, 1, 2 (3 unique values)
    - dst_ip: Encoded as 0, 1, 2, 3 (4 unique values)
    - protocol: Encoded as 0, 1 (2 unique values - TCP, UDP)
-3. **Leaky Feature Removal**: Remove is_port_6200 and is_ftp_data_port (too perfect indicators)
+3. **Feature Removal** (Cell 7): Remove 5 features total
+   - **Zero variance** (1 unique value): urg_count, is_ftp_data_port
+   - **Leaky indicator**: is_port_6200 (perfect attack indicator)
+   - **Encoded categoricals**: src_ip, dst_ip (removed after encoding for better generalization)
+   - **Result**: 31 features (from 35 original minus 4 removed - protocol kept)
 4. **Train-Test Split**: 80/20 split with stratification
 5. **Scaling**: StandardScaler on features
 6. **Feature Selection**: ANOVA F-test (SelectKBest) to select top 15 features
 7. **Model Training & Evaluation**: Multiple classifiers tested
 
-**IMPORTANT**: The notebook uses LabelEncoder for IP addresses, NOT socket.inet_aton(). This encodes IPs as simple sequential integers (0, 1, 2...) based on unique values, not as actual IP address integers.
+**IMPORTANT**: The notebook uses LabelEncoder for IP addresses, NOT socket.inet_aton(). This encodes IPs as simple sequential integers (0, 1, 2...) based on unique values. The encoded src_ip and dst_ip are then REMOVED before training (cell 7) for better generalization.
 
-### Final Feature Set (15 features after ANOVA selection)
-Selected by ANOVA F-test based on correlation with target labels.
+### Final Feature Set
+- **After preprocessing**: 31 features (35 original - 4 removed, protocol encoded kept)
+- **After ANOVA selection**: 15 features (selected by F-test based on correlation with target)
 
 ## Models Implemented
 
@@ -157,11 +162,19 @@ The preprocessing is encapsulated in `preprocessing.py`:
 
 The preprocessing order EXACTLY matches the notebook:
 1. **Categorical Encoding**: LabelEncoder for src_ip, dst_ip, protocol
-2. **Leaky Feature Removal**: Remove is_port_6200, is_ftp_data_port
-3. **Scaling**: StandardScaler on all remaining features
+2. **Feature Removal** (5 features):
+   - is_ftp_data_port (zero variance)
+   - urg_count (zero variance)
+   - src_ip (encoded categorical, removed for generalization)
+   - dst_ip (encoded categorical, removed for generalization)
+   - is_port_6200 (leaky indicator)
+3. **Scaling**: StandardScaler on all 31 remaining features
 4. **Feature Selection** (in train.py): ANOVA F-test SelectKBest (k=15)
 
-**CRITICAL**: IP addresses are encoded using LabelEncoder (sequential integers 0,1,2...), NOT socket.inet_aton()!
+**CRITICAL**:
+- IP addresses are encoded using LabelEncoder (sequential integers 0,1,2...), NOT socket.inet_aton()!
+- src_ip and dst_ip are REMOVED after encoding (notebook cell 7) for better generalization
+- Final feature count: 31 (before feature selection), then 15 (after ANOVA)
 
 ### REST API
 

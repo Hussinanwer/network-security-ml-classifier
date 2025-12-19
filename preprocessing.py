@@ -69,11 +69,15 @@ def preprocess_raw_data(df, label_encoders=None, fit_encoders=False):
     return df, label_encoders
 
 
-def remove_leaky_features(X):
+def remove_features_like_notebook(X):
     """
-    Remove features that are too perfect indicators (cause data leakage).
-    Based on notebook analysis, is_port_6200 and is_ftp_data_port are leaky.
-    This EXACTLY matches the notebook preprocessing.
+    Remove features exactly as done in the notebook (cell 7).
+    After encoding categorical features, removes:
+    - Zero variance: urg_count, is_ftp_data_port (only 1 unique value)
+    - Leaky indicator: is_port_6200 (perfect indicator for attacks)
+    - Encoded categoricals: src_ip, dst_ip (removed after encoding for better generalization)
+
+    Total: 5 features removed (35 original - 5 = 30, but protocol still there = 31 features)
 
     Args:
         X (pd.DataFrame): Feature dataframe
@@ -81,13 +85,13 @@ def remove_leaky_features(X):
     Returns:
         tuple: (filtered_X, removed_features)
     """
-    leaky_features = ['is_port_6200', 'is_ftp_data_port']
-    existing_leaky = [f for f in leaky_features if f in X.columns]
+    features_to_remove = ['is_ftp_data_port', 'urg_count', 'src_ip', 'dst_ip', 'is_port_6200']
+    existing_features = [f for f in features_to_remove if f in X.columns]
 
-    if len(existing_leaky) > 0:
-        X = X.drop(columns=existing_leaky)
+    if len(existing_features) > 0:
+        X = X.drop(columns=existing_features)
 
-    return X, existing_leaky
+    return X, existing_features
 
 
 def prepare_features_for_prediction(df, expected_features):
@@ -118,12 +122,16 @@ def prepare_features_for_prediction(df, expected_features):
 class NetworkTrafficPreprocessor:
     """
     Complete preprocessing pipeline for network traffic classification.
-    This class EXACTLY matches the notebook preprocessing pipeline:
+    This class EXACTLY matches the notebook preprocessing pipeline (NS_Project.ipynb cell 7):
     1. Encode categorical features (src_ip, dst_ip, protocol) with LabelEncoder
-    2. Remove leaky features (is_port_6200, is_ftp_data_port)
+    2. Remove 5 features: is_ftp_data_port, urg_count, src_ip, dst_ip, is_port_6200
+       - Zero variance: urg_count, is_ftp_data_port
+       - Leaky indicator: is_port_6200
+       - Encoded categoricals: src_ip, dst_ip (removed after encoding)
     3. Scale features with StandardScaler
 
-    Note: Feature selection (ANOVA SelectKBest) is done separately in train.py
+    Result: 31 features (from 35 original after removing label and 5 features)
+    Note: Feature selection (ANOVA SelectKBest k=15) is done separately in train.py
     """
 
     def __init__(self):
@@ -131,7 +139,7 @@ class NetworkTrafficPreprocessor:
         self.scaler = None
         self.final_features = None
         self.removed_features = {
-            'leaky': []
+            'removed': []  # Features removed to match notebook preprocessing
         }
 
     def fit(self, df, target_column='label'):
@@ -159,12 +167,12 @@ class NetworkTrafficPreprocessor:
         # This matches the notebook exactly!
         X, self.label_encoders = preprocess_raw_data(X, fit_encoders=True)
 
-        # Step 2: Remove leaky features ONLY (is_port_6200, is_ftp_data_port)
-        # The notebook does NOT remove zero variance, weak correlation, or high correlation features!
-        X, leaky = remove_leaky_features(X)
-        self.removed_features['leaky'] = leaky
+        # Step 2: Remove features (matching notebook cell 7)
+        # Removes: is_ftp_data_port, urg_count, src_ip, dst_ip, is_port_6200 (5 features)
+        X, removed = remove_features_like_notebook(X)
+        self.removed_features['removed'] = removed
 
-        # Store final features (after removing leaky features, before feature selection)
+        # Store final features (after removing features, before feature selection)
         self.final_features = X.columns.tolist()
 
         # Step 3: Fit scaler
@@ -189,8 +197,8 @@ class NetworkTrafficPreprocessor:
         # Step 1: Encode categorical features using saved label encoders
         X, _ = preprocess_raw_data(df, label_encoders=self.label_encoders, fit_encoders=False)
 
-        # Step 2: Remove leaky features
-        for feat in self.removed_features['leaky']:
+        # Step 2: Remove features (matching notebook)
+        for feat in self.removed_features['removed']:
             if feat in X.columns:
                 X = X.drop(columns=[feat])
 
