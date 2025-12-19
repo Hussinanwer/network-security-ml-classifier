@@ -1,9 +1,10 @@
 """
 PCAP to CSV converter for network traffic classification.
 Extracts all 35 features from PCAP files for prediction.
+Uses scapy instead of pyshark to avoid asyncio issues in Streamlit.
 """
 
-import pyshark
+from scapy.all import rdpcap, IP, TCP, UDP
 import pandas as pd
 import numpy as np
 from collections import defaultdict
@@ -15,6 +16,7 @@ def pcap_to_dataframe(pcap_file_path):
     """
     Convert a PCAP file to a DataFrame with all 35 features.
     For use in prediction (no label needed).
+    Uses scapy for synchronous packet processing (no asyncio issues).
 
     Args:
         pcap_file_path (str): Path to the PCAP file
@@ -25,11 +27,17 @@ def pcap_to_dataframe(pcap_file_path):
     if not os.path.exists(pcap_file_path):
         raise FileNotFoundError(f"PCAP file not found: {pcap_file_path}")
 
-    print(f"[*] Reading PCAP file...")
+    print(f"[*] Reading PCAP file with scapy...")
 
-    # Read PCAP file
-    cap = pyshark.FileCapture(pcap_file_path, keep_packets=False)
+    # Read PCAP file using scapy (synchronous, no event loop needed)
+    try:
+        packets = rdpcap(pcap_file_path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to read PCAP file: {e}")
 
+    print(f"[*] Loaded {len(packets)} packets")
+
+    # Track flows
     flows = defaultdict(lambda: {
         'packets': 0,
         'bytes': 0,
@@ -57,20 +65,26 @@ def pcap_to_dataframe(pcap_file_path):
     packet_count = 0
 
     # Process packets
-    for packet in cap:
+    for packet in packets:
         packet_count += 1
 
         try:
-            if not hasattr(packet, 'ip'):
+            # Only process IP packets
+            if not packet.haslayer(IP):
                 continue
 
-            src_ip = packet.ip.src
-            dst_ip = packet.ip.dst
+            ip_layer = packet[IP]
+            src_ip = ip_layer.src
+            dst_ip = ip_layer.dst
+            packet_length = len(packet)
+            timestamp = float(packet.time)
 
-            if hasattr(packet, 'tcp'):
+            # Process TCP packets
+            if packet.haslayer(TCP):
+                tcp_layer = packet[TCP]
                 protocol = 'TCP'
-                src_port = int(packet.tcp.srcport)
-                dst_port = int(packet.tcp.dstport)
+                src_port = tcp_layer.sport
+                dst_port = tcp_layer.dport
 
                 # Create flow key (bidirectional)
                 if (src_ip, src_port) < (dst_ip, dst_port):
@@ -86,7 +100,6 @@ def pcap_to_dataframe(pcap_file_path):
 
                 flow = flows[flow_key]
                 flow['packets'] += 1
-                packet_length = int(packet.length)
                 flow['bytes'] += packet_length
                 flow['packet_sizes'].append(packet_length)
 
@@ -103,25 +116,26 @@ def pcap_to_dataframe(pcap_file_path):
                 flow['dst_port'] = flow_dst_port
                 flow['protocol'] = protocol
 
-                timestamp = float(packet.sniff_timestamp)
                 flow['packet_times'].append(timestamp)
                 if flow['start_time'] is None:
                     flow['start_time'] = timestamp
                 flow['end_time'] = timestamp
 
                 # TCP flags
-                tcp_flags = int(packet.tcp.flags, 16)
-                if tcp_flags & 0x02: flow['syn_count'] += 1
-                if tcp_flags & 0x10: flow['ack_count'] += 1
-                if tcp_flags & 0x01: flow['fin_count'] += 1
-                if tcp_flags & 0x04: flow['rst_count'] += 1
-                if tcp_flags & 0x08: flow['psh_count'] += 1
-                if tcp_flags & 0x20: flow['urg_count'] += 1
+                flags = tcp_layer.flags
+                if flags.S: flow['syn_count'] += 1  # SYN
+                if flags.A: flow['ack_count'] += 1  # ACK
+                if flags.F: flow['fin_count'] += 1  # FIN
+                if flags.R: flow['rst_count'] += 1  # RST
+                if flags.P: flow['psh_count'] += 1  # PSH
+                if flags.U: flow['urg_count'] += 1  # URG
 
-            elif hasattr(packet, 'udp'):
+            # Process UDP packets
+            elif packet.haslayer(UDP):
+                udp_layer = packet[UDP]
                 protocol = 'UDP'
-                src_port = int(packet.udp.srcport)
-                dst_port = int(packet.udp.dstport)
+                src_port = udp_layer.sport
+                dst_port = udp_layer.dport
 
                 # Create flow key (bidirectional)
                 if (src_ip, src_port) < (dst_ip, dst_port):
@@ -137,7 +151,6 @@ def pcap_to_dataframe(pcap_file_path):
 
                 flow = flows[flow_key]
                 flow['packets'] += 1
-                packet_length = int(packet.length)
                 flow['bytes'] += packet_length
                 flow['packet_sizes'].append(packet_length)
 
@@ -154,16 +167,14 @@ def pcap_to_dataframe(pcap_file_path):
                 flow['dst_port'] = flow_dst_port
                 flow['protocol'] = protocol
 
-                timestamp = float(packet.sniff_timestamp)
                 flow['packet_times'].append(timestamp)
                 if flow['start_time'] is None:
                     flow['start_time'] = timestamp
                 flow['end_time'] = timestamp
 
-        except (AttributeError, ValueError):
+        except (AttributeError, ValueError, KeyError):
             continue
 
-    cap.close()
     print(f"[+] Processed {packet_count} packets, found {len(flows)} flows")
 
     # Convert flows to feature list

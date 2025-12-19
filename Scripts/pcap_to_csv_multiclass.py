@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import pyshark
+from scapy.all import rdpcap, IP, TCP, UDP
 import pandas as pd
 import numpy as np
 from collections import defaultdict
@@ -8,17 +8,21 @@ import os
 
 def extract_features_enhanced(pcap_file, label):
     """
-    Extract comprehensive network features from PCAP using PyShark
+    Extract comprehensive network features from PCAP using Scapy
     label: 0 = normal, 1 = vsftpd backdoor, 2 = SSH brute force
     """
     print(f"[*] Reading {pcap_file}...")
-    
+
     if not os.path.exists(pcap_file):
         print(f"[!] Error: {pcap_file} not found!")
         return []
-    
-    # Read PCAP file
-    cap = pyshark.FileCapture(pcap_file, keep_packets=False)
+
+    # Read PCAP file using scapy
+    try:
+        packets = rdpcap(pcap_file)
+    except Exception as e:
+        print(f"[!] Error reading PCAP: {e}")
+        return []
     
     flows = defaultdict(lambda: {
         'packets': 0,
@@ -45,22 +49,27 @@ def extract_features_enhanced(pcap_file, label):
     })
     
     packet_count = 0
-    
+
     # Process packets
-    for packet in cap:
+    for packet in packets:
         packet_count += 1
-        
+
         try:
-            if not hasattr(packet, 'ip'):
+            # Only process IP packets
+            if not packet.haslayer(IP):
                 continue
-            
-            src_ip = packet.ip.src
-            dst_ip = packet.ip.dst
-            
-            if hasattr(packet, 'tcp'):
+
+            ip_layer = packet[IP]
+            src_ip = ip_layer.src
+            dst_ip = ip_layer.dst
+            packet_length = len(packet)
+            timestamp = float(packet.time)
+
+            if packet.haslayer(TCP):
+                tcp_layer = packet[TCP]
                 protocol = 'TCP'
-                src_port = int(packet.tcp.srcport)
-                dst_port = int(packet.tcp.dstport)
+                src_port = tcp_layer.sport
+                dst_port = tcp_layer.dport
                 
                 if (src_ip, src_port) < (dst_ip, dst_port):
                     flow_key = (src_ip, dst_ip, src_port, dst_port, protocol)
@@ -75,41 +84,41 @@ def extract_features_enhanced(pcap_file, label):
                 
                 flow = flows[flow_key]
                 flow['packets'] += 1
-                packet_length = int(packet.length)
                 flow['bytes'] += packet_length
                 flow['packet_sizes'].append(packet_length)
-                
+
                 if direction == 'forward':
                     flow['forward_packets'] += 1
                     flow['forward_bytes'] += packet_length
                 else:
                     flow['backward_packets'] += 1
                     flow['backward_bytes'] += packet_length
-                
+
                 flow['src_ip'] = flow_src_ip
                 flow['dst_ip'] = flow_dst_ip
                 flow['src_port'] = flow_src_port
                 flow['dst_port'] = flow_dst_port
                 flow['protocol'] = protocol
-                
-                timestamp = float(packet.sniff_timestamp)
+
                 flow['packet_times'].append(timestamp)
                 if flow['start_time'] is None:
                     flow['start_time'] = timestamp
                 flow['end_time'] = timestamp
-                
-                tcp_flags = int(packet.tcp.flags, 16)
-                if tcp_flags & 0x02: flow['syn_count'] += 1
-                if tcp_flags & 0x10: flow['ack_count'] += 1
-                if tcp_flags & 0x01: flow['fin_count'] += 1
-                if tcp_flags & 0x04: flow['rst_count'] += 1
-                if tcp_flags & 0x08: flow['psh_count'] += 1
-                if tcp_flags & 0x20: flow['urg_count'] += 1
-                    
-            elif hasattr(packet, 'udp'):
+
+                # TCP flags using scapy
+                flags = tcp_layer.flags
+                if flags.S: flow['syn_count'] += 1  # SYN
+                if flags.A: flow['ack_count'] += 1  # ACK
+                if flags.F: flow['fin_count'] += 1  # FIN
+                if flags.R: flow['rst_count'] += 1  # RST
+                if flags.P: flow['psh_count'] += 1  # PSH
+                if flags.U: flow['urg_count'] += 1  # URG
+
+            elif packet.haslayer(UDP):
+                udp_layer = packet[UDP]
                 protocol = 'UDP'
-                src_port = int(packet.udp.srcport)
-                dst_port = int(packet.udp.dstport)
+                src_port = udp_layer.sport
+                dst_port = udp_layer.dport
                 
                 if (src_ip, src_port) < (dst_ip, dst_port):
                     flow_key = (src_ip, dst_ip, src_port, dst_port, protocol)
@@ -124,33 +133,29 @@ def extract_features_enhanced(pcap_file, label):
                 
                 flow = flows[flow_key]
                 flow['packets'] += 1
-                packet_length = int(packet.length)
                 flow['bytes'] += packet_length
                 flow['packet_sizes'].append(packet_length)
-                
+
                 if direction == 'forward':
                     flow['forward_packets'] += 1
                     flow['forward_bytes'] += packet_length
                 else:
                     flow['backward_packets'] += 1
                     flow['backward_bytes'] += packet_length
-                
+
                 flow['src_ip'] = flow_src_ip
                 flow['dst_ip'] = flow_dst_ip
                 flow['src_port'] = flow_src_port
                 flow['dst_port'] = flow_dst_port
                 flow['protocol'] = protocol
-                
-                timestamp = float(packet.sniff_timestamp)
+
                 flow['packet_times'].append(timestamp)
                 if flow['start_time'] is None:
                     flow['start_time'] = timestamp
                 flow['end_time'] = timestamp
-                
-        except (AttributeError, ValueError) as e:
+
+        except (AttributeError, ValueError, KeyError) as e:
             continue
-    
-    cap.close()
     print(f"[+] Processed {packet_count} packets, found {len(flows)} flows")
     
     # Convert flows to feature list
