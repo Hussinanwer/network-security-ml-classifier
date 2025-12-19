@@ -117,10 +117,15 @@ This project has been converted to a production-ready system with REST API and w
 │   ├── rf_model.pkl        # Random Forest (primary model)
 │   ├── lr_model.pkl        # Logistic Regression
 │   ├── svm_model.pkl       # SVM
+│   ├── dt_model.pkl        # Decision Tree
+│   ├── nb_model.pkl        # Naive Bayes
 │   ├── scaler.pkl          # StandardScaler
-│   ├── label_encoder.pkl   # Protocol encoder
+│   ├── label_encoders.pkl  # LabelEncoders for categorical features
 │   ├── preprocessor.pkl    # Complete preprocessor
+│   ├── feature_selector.pkl # ANOVA SelectKBest (k=15)
 │   └── model_metadata.pkl  # Model performance metrics
+├── Scripts/
+│   └── pcap_to_csv_multiclass.py  # Original PCAP conversion script
 ├── tests/                   # Test suite
 │   ├── test_preprocessing.py
 │   ├── test_api.py
@@ -128,9 +133,11 @@ This project has been converted to a production-ready system with REST API and w
 ├── dashboard.py             # Streamlit web interface
 ├── train.py                 # Model training script
 ├── preprocessing.py         # Preprocessing pipeline module
+├── pcap_converter.py        # PCAP to DataFrame converter (for dashboard)
 ├── config.py                # Configuration settings
 ├── run_api.py               # API launcher
 ├── run_dashboard.py         # Dashboard launcher
+├── CLAUDE.md                # Project documentation
 └── requirements.txt         # Dependencies
 ```
 
@@ -201,9 +208,15 @@ uvicorn api.app:app --host 0.0.0.0 --port 8000
 
 **Features:**
 - Manual feature input form
-- CSV upload for batch predictions
+- **CSV upload** for batch predictions
+- **PCAP upload** for batch predictions (automatically extracts network flows)
 - Real-time predictions with confidence scores
 - Confusion matrix visualization
+- Download prediction results as CSV
+
+**Supported File Types:**
+- CSV files with 35 features (template available in dashboard)
+- PCAP files (.pcap, .pcapng) - automatically converted to features
 
 **Run:**
 ```bash
@@ -213,6 +226,15 @@ streamlit run dashboard.py --server.port=8501
 ```
 
 **Access:** http://localhost:8501
+
+**PCAP Processing:**
+When uploading PCAP files, the dashboard:
+1. Extracts network flows from packets (using pyshark)
+2. Calculates all 35 features per flow
+3. Runs predictions on each flow
+4. Displays results with confidence scores
+
+Each flow represents a unique bidirectional connection between source and destination IPs/ports.
 
 ### Docker Deployment
 

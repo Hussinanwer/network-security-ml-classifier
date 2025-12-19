@@ -11,6 +11,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 import sys
+import os
+import traceback
+from pcap_converter import pcap_to_dataframe, save_uploaded_pcap
 
 # Add current directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -434,26 +437,51 @@ def main():
             help="Download this template and fill in your data"
         )
 
-        uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
+        uploaded_file = st.file_uploader("Choose a CSV or PCAP file", type=['csv', 'pcap', 'pcapng'])
 
         if uploaded_file is not None:
             try:
-                # Read CSV
-                df = pd.read_csv(uploaded_file)
+                file_extension = uploaded_file.name.split('.')[-1].lower()
 
-                # Check for required columns
-                missing_columns = set(required_columns) - set(df.columns)
-                extra_columns = set(df.columns) - set(required_columns) - {'label'}  # 'label' is optional
+                # Handle PCAP files
+                if file_extension in ['pcap', 'pcapng']:
+                    st.info("🔄 Converting PCAP file to network flows...")
 
-                if missing_columns:
-                    st.error(f"❌ Missing required columns: {', '.join(sorted(missing_columns))}")
-                    st.info("Please download the CSV template above and ensure your file includes all required columns.")
-                    st.stop()
+                    with st.spinner("Extracting features from PCAP..."):
+                        # Save uploaded file temporarily
+                        temp_pcap_path = save_uploaded_pcap(uploaded_file)
 
-                if extra_columns:
-                    st.warning(f"⚠️ Extra columns will be ignored: {', '.join(sorted(extra_columns))}")
+                        try:
+                            # Convert PCAP to DataFrame
+                            df = pcap_to_dataframe(temp_pcap_path)
 
-                st.success(f"✅ Loaded {len(df)} samples with all required columns")
+                            st.success(f"✅ Extracted {len(df)} network flows from PCAP file")
+                            st.info(f"📊 Each flow represents a unique connection between source and destination")
+
+                        finally:
+                            # Clean up temporary file
+                            if os.path.exists(temp_pcap_path):
+                                os.unlink(temp_pcap_path)
+
+                # Handle CSV files
+                else:
+                    # Read CSV
+                    df = pd.read_csv(uploaded_file)
+
+                    # Check for required columns
+                    missing_columns = set(required_columns) - set(df.columns)
+                    extra_columns = set(df.columns) - set(required_columns) - {'label'}  # 'label' is optional
+
+                    if missing_columns:
+                        st.error(f"❌ Missing required columns: {', '.join(sorted(missing_columns))}")
+                        st.info("Please download the CSV template above and ensure your file includes all required columns.")
+                        st.stop()
+
+                    if extra_columns:
+                        st.warning(f"⚠️ Extra columns will be ignored: {', '.join(sorted(extra_columns))}")
+
+                    st.success(f"✅ Loaded {len(df)} samples with all required columns")
+
                 st.markdown("**Data Preview:**")
                 st.dataframe(df.head(), use_container_width=True)
 

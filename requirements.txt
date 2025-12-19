@@ -15,5 +15,8 @@ seaborn==0.12.2
 # Utilities
 python-dotenv==1.0.0
 
+# PCAP processing
+pyshark==0.6
+
 # Testing
 pytest==7.4.3
