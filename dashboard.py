@@ -25,23 +25,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Class labels
+# Class labels (matching the notebook exactly!)
 CLASS_LABELS = {
-    0: "Normal SSH Traffic",
-    1: "FTP Traffic",
-    2: "Malicious/Attack Traffic"
+    0: "Normal",
+    1: "vsftpd Backdoor",
+    2: "SSH Brute Force"
 }
 
 CLASS_COLORS = {
-    0: "#2ecc71",  # Green
-    1: "#3498db",  # Blue
-    2: "#e74c3c"   # Red
+    0: "#2ecc71",  # Green for Normal
+    1: "#e74c3c",  # Red for vsftpd Backdoor (MALICIOUS!)
+    2: "#f39c12"   # Orange for SSH Brute Force (MALICIOUS!)
 }
 
 CLASS_DESCRIPTIONS = {
-    0: "Regular SSH (Secure Shell) traffic - typically secure remote access",
-    1: "File Transfer Protocol traffic - used for file transfers",
-    2: "Potentially malicious or attack traffic - requires investigation"
+    0: "Normal network traffic - no threats detected",
+    1: "vsftpd Backdoor Attack - MALICIOUS! Exploits vsftpd vulnerability (CVE-2011-2523)",
+    2: "SSH Brute Force Attack - MALICIOUS! Automated password guessing attempts"
 }
 
 
@@ -369,6 +369,71 @@ def main():
         st.header("Batch Prediction Mode")
         st.markdown("Upload a CSV file with network traffic data for bulk classification")
 
+        # Required columns (all original features except 'label')
+        required_columns = [
+            'src_ip', 'dst_ip', 'src_port', 'dst_port', 'protocol', 'duration',
+            'total_packets', 'total_bytes', 'min_packet_size', 'max_packet_size',
+            'avg_packet_size', 'std_packet_size', 'syn_count', 'ack_count',
+            'fin_count', 'rst_count', 'psh_count', 'urg_count',
+            'packets_per_second', 'bytes_per_second', 'bytes_per_packet',
+            'forward_packets', 'backward_packets', 'forward_bytes', 'backward_bytes',
+            'forward_backward_ratio', 'avg_iat', 'std_iat', 'min_iat', 'max_iat',
+            'syn_ack_ratio', 'is_port_22', 'is_port_6200', 'is_ftp_port', 'is_ftp_data_port'
+        ]
+
+        # Create template CSV
+        st.markdown("### Download CSV Template")
+        st.info("Your CSV must include all 35 features listed below (without the 'label' column)")
+
+        template_df = pd.DataFrame(columns=required_columns)
+        # Add one example row from the form defaults
+        template_df.loc[0] = {
+            'src_ip': '192.168.113.129',
+            'dst_ip': '192.168.113.130',
+            'src_port': 44017,
+            'dst_port': 22,
+            'protocol': 'TCP',
+            'duration': 2.103768,
+            'total_packets': 26,
+            'total_bytes': 5451,
+            'min_packet_size': 66,
+            'max_packet_size': 1602,
+            'avg_packet_size': 209.65,
+            'std_packet_size': 340.88,
+            'syn_count': 2,
+            'ack_count': 25,
+            'fin_count': 2,
+            'rst_count': 0,
+            'psh_count': 8,
+            'urg_count': 0,
+            'packets_per_second': 12.35,
+            'bytes_per_second': 2591.23,
+            'bytes_per_packet': 209.65,
+            'forward_packets': 13,
+            'backward_packets': 13,
+            'forward_bytes': 2907,
+            'backward_bytes': 2544,
+            'forward_backward_ratio': 1.14,
+            'avg_iat': 0.084151,
+            'std_iat': 0.385122,
+            'min_iat': 0.00000095,
+            'max_iat': 1.970212,
+            'syn_ack_ratio': 0.08,
+            'is_port_22': 1,
+            'is_port_6200': 0,
+            'is_ftp_port': 0,
+            'is_ftp_data_port': 0
+        }
+
+        template_csv = template_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV Template",
+            data=template_csv,
+            file_name="network_traffic_template.csv",
+            mime="text/csv",
+            help="Download this template and fill in your data"
+        )
+
         uploaded_file = st.file_uploader("Choose a CSV file", type=['csv'])
 
         if uploaded_file is not None:
@@ -376,12 +441,28 @@ def main():
                 # Read CSV
                 df = pd.read_csv(uploaded_file)
 
-                st.success(f"Loaded {len(df)} samples")
+                # Check for required columns
+                missing_columns = set(required_columns) - set(df.columns)
+                extra_columns = set(df.columns) - set(required_columns) - {'label'}  # 'label' is optional
+
+                if missing_columns:
+                    st.error(f"❌ Missing required columns: {', '.join(sorted(missing_columns))}")
+                    st.info("Please download the CSV template above and ensure your file includes all required columns.")
+                    st.stop()
+
+                if extra_columns:
+                    st.warning(f"⚠️ Extra columns will be ignored: {', '.join(sorted(extra_columns))}")
+
+                st.success(f"✅ Loaded {len(df)} samples with all required columns")
                 st.markdown("**Data Preview:**")
                 st.dataframe(df.head(), use_container_width=True)
 
                 if st.button("Predict All", type="primary"):
                     with st.spinner("Processing batch predictions..."):
+                        # Remove label column if present
+                        if 'label' in df.columns:
+                            df = df.drop('label', axis=1)
+
                         # Preprocess
                         X_processed = preprocessor.transform(df)
 
@@ -397,6 +478,9 @@ def main():
 
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
+                import traceback
+                with st.expander("Show detailed error"):
+                    st.code(traceback.format_exc())
 
     else:  # Model Info
         st.header("Model Information")

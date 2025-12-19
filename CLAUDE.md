@@ -27,23 +27,20 @@ This is a Network Security machine learning project focused on multiclass classi
 The notebook follows this workflow:
 
 1. **Data Loading & Exploration**: Load CSV, check shape, info, missing values
-2. **IP Encoding**: Convert IP addresses to integers using `socket.inet_aton`
-3. **Protocol Encoding**: Use LabelEncoder for protocol field
-4. **Zero Variance Removal**: Drop features with zero variance (urg_count, is_ftp_data_port)
-5. **Weak Feature Removal**: Remove features with correlation < 0.05 to target
-6. **Multicollinearity Handling**: Remove highly correlated features (threshold: 0.95), keeping ones with higher target correlation
-7. **Train-Test Split**: 80/20 split with stratification
-8. **SMOTE Oversampling**: Balance classes in training set (all classes → 632 samples)
-9. **Scaling**: StandardScaler on features
-10. **Model Training & Evaluation**: Multiple classifiers tested
+2. **Categorical Encoding**: Use LabelEncoder for src_ip, dst_ip, and protocol fields
+   - src_ip: Encoded as 0, 1, 2 (3 unique values)
+   - dst_ip: Encoded as 0, 1, 2, 3 (4 unique values)
+   - protocol: Encoded as 0, 1 (2 unique values - TCP, UDP)
+3. **Leaky Feature Removal**: Remove is_port_6200 and is_ftp_data_port (too perfect indicators)
+4. **Train-Test Split**: 80/20 split with stratification
+5. **Scaling**: StandardScaler on features
+6. **Feature Selection**: ANOVA F-test (SelectKBest) to select top 15 features
+7. **Model Training & Evaluation**: Multiple classifiers tested
 
-### Final Feature Set (14 features after preprocessing)
-- src_ip, src_port
-- syn_count, fin_count
-- packets_per_second, bytes_per_second
-- forward_packets, backward_bytes, forward_backward_ratio
-- avg_iat, std_iat, max_iat
-- is_port_22, is_ftp_port
+**IMPORTANT**: The notebook uses LabelEncoder for IP addresses, NOT socket.inet_aton(). This encodes IPs as simple sequential integers (0, 1, 2...) based on unique values, not as actual IP address integers.
+
+### Final Feature Set (15 features after ANOVA selection)
+Selected by ANOVA F-test based on correlation with target labels.
 
 ## Models Implemented
 
@@ -83,10 +80,12 @@ numpy, pandas, matplotlib, seaborn, sklearn, imblearn
 
 ## Class Labels
 
-The dataset has 3 classes (0, 1, 2). Based on feature correlations:
-- Class 0: Associated with normal SSH traffic (is_port_22 positive correlation)
-- Class 1: Associated with FTP traffic (is_ftp_port negative correlation with higher classes)
-- Class 2: Likely represents attack/malicious traffic (highest backward_bytes correlation)
+The dataset has 3 classes (0, 1, 2):
+- **Class 0**: Normal - Regular network traffic, no threats detected
+- **Class 1**: vsftpd Backdoor - MALICIOUS backdoor attack exploiting vsftpd vulnerability (CVE-2011-2523)
+- **Class 2**: SSH Brute Force - MALICIOUS automated password guessing attacks on SSH
+
+**IMPORTANT**: Label 1 (vsftpd Backdoor) is a MALICIOUS attack, not benign FTP traffic!
 
 ## Feature Engineering Insights
 
@@ -152,12 +151,17 @@ This script:
 The preprocessing is encapsulated in `preprocessing.py`:
 
 - **NetworkTrafficPreprocessor**: Main class that handles the complete pipeline
-- **fit()**: Fit on training data (learns encoders, scalers, feature removal)
+- **fit()**: Fit on training data (learns encoders, scalers)
 - **transform()**: Transform new data using fitted components
 - **fit_transform()**: Combined fit and transform
 
-The preprocessing order MUST be preserved:
-1. IP encoding → 2. Protocol encoding → 3. Zero variance removal → 4. Weak feature removal → 5. High correlation removal → 6. Scaling
+The preprocessing order EXACTLY matches the notebook:
+1. **Categorical Encoding**: LabelEncoder for src_ip, dst_ip, protocol
+2. **Leaky Feature Removal**: Remove is_port_6200, is_ftp_data_port
+3. **Scaling**: StandardScaler on all remaining features
+4. **Feature Selection** (in train.py): ANOVA F-test SelectKBest (k=15)
+
+**CRITICAL**: IP addresses are encoded using LabelEncoder (sequential integers 0,1,2...), NOT socket.inet_aton()!
 
 ### REST API
 

@@ -11,7 +11,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 def preprocess_raw_data(df, label_encoders=None, fit_encoders=False):
     """
     Preprocess raw network traffic data.
-    This function handles IP encoding and protocol encoding using LabelEncoder.
+    This function handles encoding of categorical features (src_ip, dst_ip, protocol) using LabelEncoder.
+    This EXACTLY matches the notebook preprocessing approach, with handling for unseen values.
 
     Args:
         df (pd.DataFrame): Raw input data
@@ -26,6 +27,8 @@ def preprocess_raw_data(df, label_encoders=None, fit_encoders=False):
     if label_encoders is None:
         label_encoders = {}
 
+    # Encode categorical features using LabelEncoder (src_ip, dst_ip, protocol)
+    # This matches the notebook exactly!
     categorical_cols = ['src_ip', 'dst_ip', 'protocol']
 
     for col in categorical_cols:
@@ -35,7 +38,27 @@ def preprocess_raw_data(df, label_encoders=None, fit_encoders=False):
                 df[col] = le.fit_transform(df[col].astype(str))
                 label_encoders[col] = le
             elif col in label_encoders:
-                df[col] = label_encoders[col].transform(df[col].astype(str))
+                # Handle unseen values during transform
+                # Map unseen values to -1 (will be handled by the model)
+                le = label_encoders[col]
+
+                # Get known classes
+                known_classes = set(le.classes_)
+
+                # For each value, encode if known, otherwise use -1
+                def safe_encode(val):
+                    val_str = str(val)
+                    if val_str in known_classes:
+                        return le.transform([val_str])[0]
+                    else:
+                        # Unseen value - encode as -1
+                        # This will be treated as a new/unknown category
+                        return -1
+
+                df[col] = df[col].apply(safe_encode)
+            else:
+                # If no encoder and not fitting, just convert to string
+                df[col] = df[col].astype(str)
 
     # Handle infinite values
     df = df.replace([np.inf, -np.inf], 0)
@@ -50,6 +73,7 @@ def remove_leaky_features(X):
     """
     Remove features that are too perfect indicators (cause data leakage).
     Based on notebook analysis, is_port_6200 and is_ftp_data_port are leaky.
+    This EXACTLY matches the notebook preprocessing.
 
     Args:
         X (pd.DataFrame): Feature dataframe
@@ -64,89 +88,6 @@ def remove_leaky_features(X):
         X = X.drop(columns=existing_leaky)
 
     return X, existing_leaky
-
-
-def remove_zero_variance_features(X, variance_threshold=0):
-    """
-    Remove features with zero variance.
-
-    Args:
-        X (pd.DataFrame): Feature dataframe
-        variance_threshold (float): Variance threshold
-
-    Returns:
-        tuple: (filtered_X, removed_features)
-    """
-    variances = X.var()
-    zero_var_features = variances[variances == variance_threshold].index.tolist()
-
-    if len(zero_var_features) > 0:
-        X = X.drop(columns=zero_var_features)
-
-    return X, zero_var_features
-
-
-def remove_weak_features(X, y, correlation_threshold=0.05):
-    """
-    Remove features with weak correlation to target.
-
-    Args:
-        X (pd.DataFrame): Feature dataframe
-        y (pd.Series): Target variable
-        correlation_threshold (float): Minimum absolute correlation
-
-    Returns:
-        tuple: (filtered_X, removed_features)
-    """
-    target_correlations = X.corrwith(y).abs()
-    weak_features = target_correlations[target_correlations < correlation_threshold].index.tolist()
-
-    if len(weak_features) > 0:
-        X = X.drop(columns=weak_features)
-
-    return X, weak_features
-
-
-def remove_highly_correlated_features(X, y, correlation_threshold=0.95):
-    """
-    Remove highly correlated features, keeping ones with higher target correlation.
-
-    Args:
-        X (pd.DataFrame): Feature dataframe
-        y (pd.Series): Target variable
-        correlation_threshold (float): Correlation threshold for feature pairs
-
-    Returns:
-        tuple: (filtered_X, removed_features)
-    """
-    corr_matrix = X.corr()
-    target_correlations = X.corrwith(y).abs()
-
-    high_corr_pairs = []
-    for i in range(len(corr_matrix.columns)):
-        for j in range(i+1, len(corr_matrix.columns)):
-            if abs(corr_matrix.iloc[i, j]) > correlation_threshold:
-                high_corr_pairs.append({
-                    'Feature1': corr_matrix.columns[i],
-                    'Feature2': corr_matrix.columns[j],
-                    'Correlation': corr_matrix.iloc[i, j]
-                })
-
-    to_remove = set()
-    for pair in high_corr_pairs:
-        feat1 = pair['Feature1']
-        feat2 = pair['Feature2']
-        # Keep feature with higher target correlation
-        if target_correlations[feat1] < target_correlations[feat2]:
-            to_remove.add(feat1)
-        else:
-            to_remove.add(feat2)
-
-    to_remove = list(to_remove)
-    if len(to_remove) > 0:
-        X = X.drop(columns=to_remove)
-
-    return X, to_remove
 
 
 def prepare_features_for_prediction(df, expected_features):
@@ -177,8 +118,12 @@ def prepare_features_for_prediction(df, expected_features):
 class NetworkTrafficPreprocessor:
     """
     Complete preprocessing pipeline for network traffic classification.
-    This class encapsulates all preprocessing steps in the correct order.
-    Matches the exact preprocessing steps from the notebook.
+    This class EXACTLY matches the notebook preprocessing pipeline:
+    1. Encode categorical features (src_ip, dst_ip, protocol) with LabelEncoder
+    2. Remove leaky features (is_port_6200, is_ftp_data_port)
+    3. Scale features with StandardScaler
+
+    Note: Feature selection (ANOVA SelectKBest) is done separately in train.py
     """
 
     def __init__(self):
@@ -186,15 +131,13 @@ class NetworkTrafficPreprocessor:
         self.scaler = None
         self.final_features = None
         self.removed_features = {
-            'leaky': [],
-            'zero_variance': [],
-            'weak_correlation': [],
-            'high_correlation': []
+            'leaky': []
         }
 
     def fit(self, df, target_column='label'):
         """
         Fit the preprocessor on training data.
+        EXACTLY matches the notebook preprocessing before feature selection.
 
         Args:
             df (pd.DataFrame): Training dataframe with all original features
@@ -213,28 +156,18 @@ class NetworkTrafficPreprocessor:
             raise ValueError(f"Target column '{target_column}' not found")
 
         # Step 1: Encode categorical features (src_ip, dst_ip, protocol) using LabelEncoder
+        # This matches the notebook exactly!
         X, self.label_encoders = preprocess_raw_data(X, fit_encoders=True)
 
-        # Step 2: Remove leaky features (is_port_6200, is_ftp_data_port)
+        # Step 2: Remove leaky features ONLY (is_port_6200, is_ftp_data_port)
+        # The notebook does NOT remove zero variance, weak correlation, or high correlation features!
         X, leaky = remove_leaky_features(X)
         self.removed_features['leaky'] = leaky
 
-        # Step 3: Remove zero variance features
-        X, zero_var = remove_zero_variance_features(X)
-        self.removed_features['zero_variance'] = zero_var
-
-        # Step 4: Remove weak features (correlation < 0.05)
-        X, weak = remove_weak_features(X, y, correlation_threshold=0.05)
-        self.removed_features['weak_correlation'] = weak
-
-        # Step 5: Remove highly correlated features (correlation > 0.95)
-        X, high_corr = remove_highly_correlated_features(X, y, correlation_threshold=0.95)
-        self.removed_features['high_correlation'] = high_corr
-
-        # Store final features
+        # Store final features (after removing leaky features, before feature selection)
         self.final_features = X.columns.tolist()
 
-        # Step 6: Fit scaler (will be applied after train-test split)
+        # Step 3: Fit scaler
         self.scaler = StandardScaler()
         self.scaler.fit(X)
 
@@ -243,34 +176,28 @@ class NetworkTrafficPreprocessor:
     def transform(self, df):
         """
         Transform new data using fitted preprocessor.
+        EXACTLY matches the notebook preprocessing.
 
         Args:
             df (pd.DataFrame): Input dataframe with raw features
 
         Returns:
-            np.ndarray: Scaled feature array ready for prediction
+            np.ndarray: Scaled feature array ready for feature selection/prediction
         """
         df = df.copy()
 
-        # Step 1: Encode categorical features
+        # Step 1: Encode categorical features using saved label encoders
         X, _ = preprocess_raw_data(df, label_encoders=self.label_encoders, fit_encoders=False)
 
-        # Step 2-5: Remove features (using saved list from fit)
-        features_to_remove = (
-            self.removed_features['leaky'] +
-            self.removed_features['zero_variance'] +
-            self.removed_features['weak_correlation'] +
-            self.removed_features['high_correlation']
-        )
-
-        for feat in features_to_remove:
+        # Step 2: Remove leaky features
+        for feat in self.removed_features['leaky']:
             if feat in X.columns:
                 X = X.drop(columns=[feat])
 
         # Ensure correct feature order
         X = prepare_features_for_prediction(X, self.final_features)
 
-        # Step 6: Scale
+        # Step 3: Scale
         X_scaled = self.scaler.transform(X)
 
         return X_scaled
