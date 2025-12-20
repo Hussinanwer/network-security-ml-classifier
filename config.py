@@ -20,6 +20,7 @@ SVM_MODEL_PATH = MODELS_DIR / "svm_model.pkl"
 SCALER_PATH = MODELS_DIR / "scaler.pkl"
 LABEL_ENCODER_PATH = MODELS_DIR / "label_encoder.pkl"
 PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.pkl"
+FEATURE_SELECTOR_PATH = MODELS_DIR / "feature_selector.pkl"
 METADATA_PATH = MODELS_DIR / "model_metadata.pkl"
 
 # Data paths
@@ -30,12 +31,21 @@ DATASET_PATH = DATA_DIR / "network_traffic_multiclass_dataset.csv"
 DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "8501"))
 
 # Model settings
-MODEL_TYPE = os.getenv("MODEL_TYPE", "random_forest")  # Options: random_forest, logistic_regression, svm
+MODEL_TYPE = os.getenv("MODEL_TYPE", "svm")  # Options: random_forest, logistic_regression, svm
 RANDOM_SEED = 42
 TEST_SIZE = 0.2
 
 # Training settings
 SMOTE_STRATEGY = "auto"
+
+# SVM settings
+SVM_KERNEL = os.getenv("SVM_KERNEL", "rbf")  # Options: linear, rbf, poly, sigmoid
+SVM_C = float(os.getenv("SVM_C", "1.0"))  # Regularization parameter
+SVM_GAMMA = os.getenv("SVM_GAMMA", "scale")  # Kernel coefficient (scale, auto, or float)
+SVM_CLASS_WEIGHT = "balanced"  # Handle imbalanced classes
+SVM_PROBABILITY = True  # Enable probability estimates for predict_proba()
+
+# Random Forest settings (keep for flexibility)
 RF_N_ESTIMATORS = int(os.getenv("RF_N_ESTIMATORS", "100"))
 RF_N_JOBS = int(os.getenv("RF_N_JOBS", "-1"))
 
@@ -44,18 +54,21 @@ ZERO_VARIANCE_THRESHOLD = 0
 WEAK_CORRELATION_THRESHOLD = 0.05
 HIGH_CORRELATION_THRESHOLD = 0.95
 
+# Feature selection settings (for RFE)
+N_FEATURES_TO_SELECT = 15  # Number of features for RFE
+
 # Logging settings
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # Class labels
 CLASS_LABELS = {
-    0: "Normal SSH Traffic",
-    1: "FTP Traffic",
-    2: "Malicious/Attack Traffic"
+    0: "Normal",
+    1: "vsftpd Backdoor",
+    2: "SSH Brute Force"
 }
 
-# Final features (after preprocessing)
+# Final features (after preprocessing and feature selection)
 FINAL_FEATURES = [
     'src_ip',
     'src_port',

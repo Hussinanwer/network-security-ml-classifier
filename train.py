@@ -13,7 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn import svm
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
-from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.feature_selection import SelectKBest, f_classif,RFE
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report
@@ -94,6 +94,8 @@ def train_and_evaluate_models(X_train, y_train, X_test, y_test):
         kernel='rbf',
         C=1.0,
         gamma='scale',
+        class_weight='balanced',
+        probability=True,  # Enable probability estimates for predict_proba()
         random_state=42
     )
     svm_model.fit(X_train, y_train)
@@ -285,6 +287,7 @@ def save_models(preprocessor, models, selector, models_dir='models'):
             'precision': models['svm']['precision'],
             'recall': models['svm']['recall'],
             'f1_score': models['svm']['f1_score'],
+            'confusion_matrix': models['svm']['confusion_matrix'].tolist(),
         },
         'decision_tree': {
             'test_accuracy': models['decision_tree']['test_accuracy'],
@@ -351,14 +354,17 @@ def main():
     X_train_scaled = preprocessor.scaler.transform(X_train)
     X_test_scaled = preprocessor.scaler.transform(X_test)
 
-    # ANOVA Feature Selection (SelectKBest with k=15 or all available features)
+    # RFE Feature Selection (Recursive Feature Elimination)
     print("\n" + "="*70)
-    print("FEATURE SELECTION - ANOVA F-TEST")
+    print("FEATURE SELECTION - RFE (Recursive Feature Elimination)")
     print("="*70)
     k_best = min(15, X_train_scaled.shape[1])  # Use all features if less than 15
-    print(f"Selecting top {k_best} features using ANOVA F-test (out of {X_train_scaled.shape[1]} available)...")
+    print(f"Selecting top {k_best} features using RFE with Random Forest (out of {X_train_scaled.shape[1]} available)...")
 
-    selector = SelectKBest(score_func=f_classif, k=k_best)
+    # Use Random Forest as estimator for RFE
+    rf_estimator = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
+    selector = RFE(estimator=rf_estimator, n_features_to_select=k_best, step=1)
+
     X_train_selected = selector.fit_transform(X_train_scaled, y_train)
     X_test_selected = selector.transform(X_test_scaled)
 
@@ -369,8 +375,10 @@ def main():
     print(f"\nSelected {k_best} features:")
     for i, feature in enumerate(selected_features, 1):
         feature_idx = preprocessor.final_features.index(feature)
-        score = selector.scores_[feature_idx]
-        print(f"   {i:2d}. {feature:30s} (F-Score: {score:10.2f})")
+        ranking = selector.ranking_[feature_idx]
+        print(f"   {i:2d}. {feature:30s} (Rank: {ranking})")
+
+    print(f"\nRFE feature selection complete!")
 
     # Train models on selected features
     models = train_and_evaluate_models(

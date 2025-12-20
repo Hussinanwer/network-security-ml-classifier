@@ -62,15 +62,15 @@ def load_models():
         with open(models_dir / "feature_selector.pkl", "rb") as f:
             feature_selector = pickle.load(f)
 
-        # Load Random Forest model (primary model)
-        with open(models_dir / "rf_model.pkl", "rb") as f:
-            rf_model = pickle.load(f)
+        # Load SVM model (primary model)
+        with open(models_dir / "svm_model.pkl", "rb") as f:
+            svm_model = pickle.load(f)
 
         # Load metadata
         with open(models_dir / "model_metadata.pkl", "rb") as f:
             metadata = pickle.load(f)
 
-        return preprocessor, feature_selector, rf_model, metadata
+        return preprocessor, feature_selector, svm_model, metadata
 
     except FileNotFoundError as e:
         st.error(f"Model files not found! Please run train.py first. Missing: {e}")
@@ -198,140 +198,120 @@ def display_prediction_result(prediction, probabilities):
         )
 
     with col2:
-        confidence = probabilities[prediction] * 100
         st.metric(
             label="Confidence",
-            value=f"{confidence:.2f}%"
+            value=f"{probabilities[prediction]:.2%}"
         )
 
     with col3:
-        st.info(CLASS_DESCRIPTIONS[prediction])
+        # Color-coded alert
+        color = CLASS_COLORS[prediction]
+        st.markdown(
+            f"""
+            <div style="background-color: {color}; padding: 15px; border-radius: 5px; color: white;">
+                <h3 style="margin: 0; color: white;">⚠️ {CLASS_LABELS[prediction]}</h3>
+                <p style="margin: 5px 0 0 0; color: white;">{CLASS_DESCRIPTIONS[prediction]}</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-    # Probability visualization
-    st.markdown("### Class Probabilities")
+    # Probability distribution
+    st.markdown("### Class Probability Distribution")
 
-    # Create probability bar chart
     prob_df = pd.DataFrame({
-        'Class': [f"Class {i}: {CLASS_LABELS[i]}" for i in range(3)],
-        'Probability': [probabilities[i] * 100 for i in range(3)],
-        'Color': [CLASS_COLORS[i] for i in range(3)]
+        'Class': [CLASS_LABELS[i] for i in range(3)],
+        'Probability': probabilities,
+        'Percentage': [f"{p:.2%}" for p in probabilities]
     })
 
     fig = px.bar(
         prob_df,
-        x='Probability',
-        y='Class',
-        orientation='h',
-        color='Color',
-        color_discrete_map="identity",
-        text='Probability'
-    )
-
-    fig.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-    fig.update_layout(
-        xaxis_title="Probability (%)",
-        yaxis_title="",
-        showlegend=False,
-        height=250
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def display_batch_results(predictions, probabilities, original_df=None):
-    """Display batch prediction results."""
-    st.markdown("---")
-    st.subheader("Batch Prediction Results")
-
-    # Summary statistics
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("Total Samples", len(predictions))
-
-    with col2:
-        class_0_count = sum(predictions == 0)
-        st.metric(CLASS_LABELS[0], class_0_count)
-
-    with col3:
-        class_1_count = sum(predictions == 1)
-        st.metric(CLASS_LABELS[1], class_1_count)
-
-    with col4:
-        class_2_count = sum(predictions == 2)
-        st.metric(CLASS_LABELS[2], class_2_count)
-
-    # Class distribution pie chart
-    st.markdown("### Class Distribution")
-
-    class_counts = pd.DataFrame({
-        'Class': [CLASS_LABELS[i] for i in range(3)],
-        'Count': [sum(predictions == i) for i in range(3)]
-    })
-
-    fig = px.pie(
-        class_counts,
-        values='Count',
-        names='Class',
+        x='Class',
+        y='Probability',
+        text='Percentage',
         color='Class',
-        color_discrete_map={
-            CLASS_LABELS[0]: CLASS_COLORS[0],
-            CLASS_LABELS[1]: CLASS_COLORS[1],
-            CLASS_LABELS[2]: CLASS_COLORS[2]
-        }
+        color_discrete_map={CLASS_LABELS[i]: CLASS_COLORS[i] for i in range(3)}
     )
+
+    fig.update_layout(
+        showlegend=False,
+        height=300,
+        yaxis_title="Probability",
+        xaxis_title="Traffic Class"
+    )
+
+    fig.update_traces(textposition='outside')
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Detailed results table
+
+def display_batch_results(predictions, probabilities, original_df):
+    """Display batch prediction results with statistics and visualizations."""
+    st.success(f"✅ Processed {len(predictions)} samples successfully!")
+
+    # Class distribution
+    st.markdown("### Prediction Distribution")
+
+    col1, col2, col3 = st.columns(3)
+
+    for i, (col, label) in enumerate(zip([col1, col2, col3], CLASS_LABELS.values())):
+        count = np.sum(predictions == i)
+        percentage = (count / len(predictions)) * 100
+        with col:
+            st.metric(
+                label=label,
+                value=count,
+                delta=f"{percentage:.1f}%"
+            )
+
+    # Pie chart
+    class_counts = pd.Series(predictions).value_counts().sort_index()
+    fig = px.pie(
+        values=class_counts.values,
+        names=[CLASS_LABELS[i] for i in class_counts.index],
+        color=[CLASS_LABELS[i] for i in class_counts.index],
+        color_discrete_map={CLASS_LABELS[i]: CLASS_COLORS[i] for i in range(3)},
+        title="Traffic Classification Distribution"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Results table
     st.markdown("### Detailed Results")
 
-    results_df = pd.DataFrame({
-        'Index': range(len(predictions)),
-        'Predicted Class': predictions,
-        'Prediction Label': [CLASS_LABELS[p] for p in predictions],
-        'Confidence (%)': [probabilities[i][predictions[i]] * 100 for i in range(len(predictions))],
-        'Class 0 Prob (%)': [probabilities[i][0] * 100 for i in range(len(predictions))],
-        'Class 1 Prob (%)': [probabilities[i][1] * 100 for i in range(len(predictions))],
-        'Class 2 Prob (%)': [probabilities[i][2] * 100 for i in range(len(predictions))]
-    })
+    results_df = original_df.copy()
+    results_df['Predicted_Class'] = predictions
+    results_df['Predicted_Label'] = [CLASS_LABELS[p] for p in predictions]
+    results_df['Confidence'] = [probabilities[i][predictions[i]] for i in range(len(predictions))]
 
-    # Add color coding
-    def color_prediction(row):
-        color = CLASS_COLORS[row['Predicted Class']]
-        return [f'background-color: {color}; color: white' if col == 'Prediction Label' else '' for col in row.index]
+    # Reorder columns to show predictions first
+    cols = ['Predicted_Label', 'Confidence', 'Predicted_Class'] + list(original_df.columns)
+    results_df = results_df[cols]
 
-    st.dataframe(
-        results_df.style.apply(color_prediction, axis=1).format({
-            'Confidence (%)': '{:.2f}',
-            'Class 0 Prob (%)': '{:.2f}',
-            'Class 1 Prob (%)': '{:.2f}',
-            'Class 2 Prob (%)': '{:.2f}'
-        }),
-        use_container_width=True,
-        height=400
-    )
+    st.dataframe(results_df, use_container_width=True)
 
     # Download results
     csv = results_df.to_csv(index=False)
     st.download_button(
-        label="Download Results as CSV",
+        label="Download Predictions as CSV",
         data=csv,
-        file_name="prediction_results.csv",
+        file_name="network_traffic_predictions.csv",
         mime="text/csv"
     )
 
 
 def main():
-    """Main dashboard application."""
-
-    # Header
-    st.title("🔒 Network Traffic Classification Dashboard")
-    st.markdown("Classify network traffic patterns using machine learning")
+    """Main application function."""
+    st.title("🔒 Network Traffic Classification System")
+    st.markdown("**Powered by SVM (Support Vector Machine)**")
+    st.markdown("---")
 
     # Load models
-    with st.spinner("Loading models..."):
-        preprocessor, feature_selector, rf_model, metadata = load_models()
+    try:
+        preprocessor, feature_selector, svm_model, metadata = load_models()
+    except Exception as e:
+        st.error(f"Failed to load models: {e}")
+        st.stop()
 
     # Sidebar
     st.sidebar.title("Navigation")
@@ -341,36 +321,39 @@ def main():
     )
 
     if page == "Single Prediction":
-        st.header("Single Prediction Mode")
+        st.header("Single Traffic Flow Prediction")
         st.markdown("Enter network traffic features manually for classification")
 
+        # Create input form
         features = create_feature_input_form()
 
         if st.button("Predict", type="primary"):
-            with st.spinner("Making prediction..."):
+            with st.spinner("Classifying traffic..."):
                 try:
                     # Convert to DataFrame
-                    df = pd.DataFrame([features])
+                    input_df = pd.DataFrame([features])
 
                     # Preprocess
-                    X_processed = preprocessor.transform(df)
+                    X_processed = preprocessor.transform(input_df)
 
                     # Apply feature selection
                     X_selected = feature_selector.transform(X_processed)
 
                     # Predict
-                    prediction = rf_model.predict(X_selected)[0]
-                    probabilities = rf_model.predict_proba(X_selected)[0]
+                    prediction = svm_model.predict(X_selected)[0]
+                    probabilities = svm_model.predict_proba(X_selected)[0]
 
-                    # Display results
+                    # Display result
                     display_prediction_result(prediction, probabilities)
 
                 except Exception as e:
-                    st.error(f"Prediction failed: {str(e)}")
+                    st.error(f"Prediction error: {str(e)}")
+                    with st.expander("Show detailed error"):
+                        st.code(traceback.format_exc())
 
     elif page == "Batch Prediction":
-        st.header("Batch Prediction Mode")
-        st.markdown("Upload a CSV file with network traffic data for bulk classification")
+        st.header("Batch Traffic Analysis")
+        st.markdown("Upload a CSV or PCAP file for bulk classification")
 
         # Required columns (all original features except 'label')
         required_columns = [
@@ -498,8 +481,8 @@ def main():
                         X_selected = feature_selector.transform(X_processed)
 
                         # Predict
-                        predictions = rf_model.predict(X_selected)
-                        probabilities = rf_model.predict_proba(X_selected)
+                        predictions = svm_model.predict(X_selected)
+                        probabilities = svm_model.predict_proba(X_selected)
 
                         # Display results
                         display_batch_results(predictions, probabilities, df)
@@ -513,20 +496,20 @@ def main():
     else:  # Model Info
         st.header("Model Information")
 
-        rf_metrics = metadata['random_forest']
+        svm_metrics = metadata['svm']
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("### Model Performance")
-            st.metric("Test Accuracy", f"{rf_metrics['test_accuracy']:.4f}")
-            st.metric("Precision", f"{rf_metrics['precision']:.4f}")
-            st.metric("Recall", f"{rf_metrics['recall']:.4f}")
-            st.metric("F1 Score", f"{rf_metrics['f1_score']:.4f}")
+            st.markdown("### SVM Model Performance")
+            st.metric("Test Accuracy", f"{svm_metrics['test_accuracy']:.4f}")
+            st.metric("Precision", f"{svm_metrics['precision']:.4f}")
+            st.metric("Recall", f"{svm_metrics['recall']:.4f}")
+            st.metric("F1 Score", f"{svm_metrics['f1_score']:.4f}")
 
         with col2:
             st.markdown("### Confusion Matrix")
-            cm = np.array(rf_metrics['confusion_matrix'])
+            cm = np.array(svm_metrics['confusion_matrix'])
 
             fig = go.Figure(data=go.Heatmap(
                 z=cm,
@@ -547,7 +530,7 @@ def main():
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("### Final Features Used")
-        st.info(f"The model uses {len(metadata['final_features'])} features after preprocessing")
+        st.info(f"The model uses {len(metadata['final_features'])} features after preprocessing and RFE")
 
         features_df = pd.DataFrame({
             'Feature': metadata['final_features']
